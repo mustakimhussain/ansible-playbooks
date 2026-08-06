@@ -1,0 +1,52 @@
+---
+- name: Configure UFW Firewall (SSH + Cockpit)
+  hosts: firewall_hosts
+  become: true
+  serial: 1  # Update one host at a time to prevent lockout
+
+  tasks:
+    - name: Install UFW package
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: yes
+
+    - name: Set default incoming policy to deny
+      community.general.ufw:
+        direction: incoming
+        default: deny
+
+    - name: Set default outgoing policy to allow
+      community.general.ufw:
+        direction: outgoing
+        default: allow
+
+   # CRITICAL: Allow SSH before enabling the firewall
+    - name: Allow SSH connections
+      community.general.ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+        comment: 'Allow SSH access'
+
+    # Allow Cockpit Web Console
+    - name: Allow Cockpit port (9090)
+      community.general.ufw:
+        rule: allow
+        port: '9090'
+        proto: tcp
+        comment: 'Allow Cockpit web console'
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+        logging: 'low'
+
+    - name: Verify UFW status
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+
+    - name: Show firewall rules
+      ansible.builtin.debug:
+        var: ufw_status.stdout_lines
