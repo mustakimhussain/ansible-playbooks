@@ -5,12 +5,13 @@ A lightweight Ansible project for managing firewall rules (UFW) and system updat
 ## 📂 Project Structure
 
 ```bash.
-├── ansible.cfg            # Configuration (points to ./inventory/)
+├── ansible.cfg                # Configuration (points to ./inventory/)
 ├── inventory/
-│   └── hosts              # Inventory file
+│   └── hosts                  # Inventory file
 ├── playbooks/
-│   ├── apt.yml            # System updates (safe upgrade, no kernel)
-│   └── ufw.yml            # Firewall setup (SSH + Cockpit)
+│   ├── apt.yml                # System updates (safe upgrade, no kernel)
+│   └── ufw.yml                # Firewall setup (SSH + Cockpit)
+│   └── install_essentials.yml # Install essential tools (ssh, git, cockpit, nala, btop ...)
 └── README.md
 ```
 ## 🚀 Quick Start
@@ -33,10 +34,10 @@ Generate a key on the control node and copy it to your targets to enable passwor
 
 ```bash
 # Generate Key
-ssh-keygen -t ed25519 -f ~/.ssh/id_rsa
+ssh-keygen -t ed25519 -f ~/.ssh/ansible
 
 # Copy to Target Server (replace IP/user)
-ssh-copy-id -i ~/.ssh/id_rsa.pub user@192.168.1.100   
+ssh-copy-id -i ~/.ssh/ansible.pub user@192.168.1.100   
 ```
 
 ### 3. Configure Inventory
