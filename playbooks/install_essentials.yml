@@ -1,0 +1,161 @@
+---
+- name: Install Essential System Tools
+  hosts: debian_hosts
+  become: yes
+  vars:
+    # Base packages common to all Debian-based systems
+    base_packages:
+      - openssh-server
+      - cockpit
+      - btop
+      - curl
+      - git
+      - vim
+      - htop
+      - net-tools
+      - gnupg
+      - apt-transport-https
+      - ca-certificates
+
+    # OS-specific repository management tools
+    # Define repo tools only for versions that support them
+    repo_tools:
+      Debian: "{{ 'software-properties-common' if (ansible_distribution_major_version | int < 13) else omit }}"
+      Ubuntu: software-properties-common
+      Linuxmint: mintsources
+
+  tasks:
+    # --- Network Resilient Cache Update ---
+    - name: Update apt cache (Retry on network failure)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      register: apt_update_result
+      retries: 3
+      delay: 10
+      until: apt_update_result is succeeded
+      ignore_errors: yes
+
+    - name: Warn if cache update failed
+      ansible.builtin.debug:
+        msg: "WARNING: Could not update apt cache. Proceeding with existing cache."
+      when: apt_update_result is failed
+
+
+    # --- Install OS-Specific Repo Tools ---
+    - name: Install repository management tool
+      ansible.builtin.apt:
+        name: "{{ repo_tools[ansible_distribution] }}"
+        state: present
+      when: repo_tools[ansible_distribution] is defined
+      retries: 2
+      delay: 5
+      ignore_errors: yes
+
+    - name: Capture current package list (Pre-Install)
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Store pre-install list
+      ansible.builtin.set_fact:
+        prev_package_list: "{{ ansible_facts.packages.keys() | list }}"
+
+    # --- Install Base Packages ---
+    - name: Install standard essential packages
+      ansible.builtin.apt:
+        name: "{{ base_packages }}"
+        state: present
+      register: install_result
+      retries: 2
+      delay: 5
+      until: install_result is succeeded
+      ignore_errors: yes
+
+    # --- Reporting ---
+    - name: Gather package facts (After Install)
+      ansible.builtin.package_facts:
+        manager: apt
+      when: install_result is succeeded
+
+    - name: Identify newly installed packages
+      ansible.builtin.set_fact:
+        newly_installed: >-
+          {{
+            (ansible_facts.packages.keys() | intersect(base_packages))
+            | difference(prev_package_list | default([]))
+          }}
+      when: install_result is succeeded
+
+    # --- Smart Nala Installation with Fallbacks ---
+    - name: Attempt Nala Installation
+      block:
+        - name: Check if Nala is available in default repos
+          ansible.builtin.shell: apt-cache policy nala
+          register: nala_check
+          changed_when: false
+          failed_when: false
+          when: install_result is succeeded
+
+        - name: Install Nala (Standard or Legacy)
+          ansible.builtin.apt:
+            name: "{{ 'nala-legacy' if (ansible_distribution_major_version | int < 12) else 'nala' }}"
+            state: present
+          when:
+            - install_result is succeeded
+            - nala_check is defined
+            - "'Candidate: (none)' not in nala_check.stdout"
+          register: nala_install
+          failed_when: nala_install is failed
+
+      rescue:
+        - name: Nala standard/legacy failed, trying Volian Repo (Fallback)
+          block:
+            - name: Install Volian GPG Key
+              ansible.builtin.get_url:
+                url: https://deb.volian.org/volian/scar.key
+                dest: /etc/apt/trusted.gpg.d/volian-archive-scar-unstable.gpg
+                mode: '0644'
+              retries: 2
+              delay: 5
+
+            - name: Add Volian Repository
+              ansible.builtin.apt_repository:
+                repo: "deb http://deb.volian.org/volian/ scar main"
+                state: present
+                filename: volian-archive-scar-unstable
+
+            - name: Update cache after adding repo
+              ansible.builtin.apt:
+                update_cache: yes
+
+            - name: Install Nala Legacy from Volian
+              ansible.builtin.apt:
+                name: nala-legacy
+                state: present
+
+          rescue:
+            - name: Final Fallback - Skip Nala
+              ansible.builtin.debug:
+                msg: "Could not install Nala after multiple attempts. Skipping."
+
+    # --- Service Management (Local, No Network Required) ---
+    - name: Ensure SSH service is running and enabled
+      ansible.builtin.service:
+        name: ssh
+        state: started
+        enabled: yes
+
+    - name: Ensure Cockpit service is running and enabled
+      ansible.builtin.service:
+        name: cockpit.socket
+        state: started
+        enabled: yes
+
+    - name: Report detailed installation status
+      ansible.builtin.debug:
+        msg:
+          - "Base packages installation: {{ 'Success' if install_result is succeeded else 'Failed' }}"
+          - "Nala: {{ 'Installed' if (nala_install is defined and nala_install is succeeded) else 'Skipped/Failed' }}"
+          - "Newly installed: {{ newly_installed | default([]) }}"
+          - "Skipped/Failed: {{ base_packages | difference(ansible_facts.packages.keys() | list) if install_result is succeeded else 'Could not verify due to failure' }}"
+      when: install_result is succeeded or install_result is failed
