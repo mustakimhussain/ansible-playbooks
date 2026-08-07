@@ -25,11 +25,27 @@
         clean: yes
       register: upgrade_result
 
-    - name: Show apt upgrade status
-      ansible.builtin.debug:
-        msg: "Packages upgraded: {{ upgrade_result.changed }} | {{ upgrade_result.msg | default('No output') }}"
-      when: upgrade_result.changed or upgrade_result.msg is defined
+    - name: Get package versions before upgrade
+      ansible.builtin.command: dpkg-query -W -f='${Package} ${Version}\n'
+      register: pkg_before
+      changed_when: false
+      failed_when: false
+      when: upgrade_result is changed
 
+    - name: Get package versions after upgrade
+      ansible.builtin.command: dpkg-query -W -f='${Package} ${Version}\n'
+      register: pkg_after
+      changed_when: false
+      failed_when: false
+      when: upgrade_result is changed
+
+    - name: Show exactly which packages were upgraded
+      ansible.builtin.debug:
+        msg: "Packages upgraded:\n{{ pkg_after.stdout_lines | difference(pkg_before.stdout_lines) | join('\n') }}"
+      when:
+        - upgrade_result is changed
+        - pkg_before.stdout_lines is defined
+        - pkg_after.stdout_lines is defined
 
     # Reboot section disabled
     # - name: Check if reboot is required
